@@ -16,12 +16,18 @@ namespace RT64 {
 
         this->shaderCache = shaderCache;
 
+        threadRunning = true;
         thread = std::make_unique<std::thread>(&CompilationThread::loop, this);
-        threadRunning = false;
     }
 
     RasterShaderCache::CompilationThread::~CompilationThread() {
-        threadRunning = false;
+        {
+            // The wait predicate reads threadRunning while holding this mutex.
+            // Use the same mutex here so shutdown cannot notify between the
+            // predicate check and the worker entering condition_variable::wait.
+            std::lock_guard<std::mutex> queueLock(shaderCache->descQueueMutex);
+            threadRunning = false;
+        }
         shaderCache->descQueueChanged.notify_all();
         thread->join();
         thread.reset(nullptr);
@@ -32,8 +38,6 @@ namespace RT64 {
 
         // The shader compilation thread should have idle priority by default as the application can use the ubershader in the meantime.
         Thread::setCurrentThreadPriority(Thread::Priority::Idle);
-
-        threadRunning = true;
 
         while (threadRunning) {
             ShaderDescription shaderDesc;

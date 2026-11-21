@@ -1058,8 +1058,6 @@ namespace RT64 {
         // Create texture with configured descriptor and alignment
         MTL::TextureDescriptor *descriptor = MTL::TextureDescriptor::textureBufferDescriptor(pixelFormat, width, options, usage);
         this->texture = buffer->mtl->newTexture(descriptor, 0, bytesPerRow);
-
-        descriptor->release();
     }
 
     MetalBufferFormattedView::~MetalBufferFormattedView() {
@@ -1173,7 +1171,9 @@ namespace RT64 {
         assert(format == RenderShaderFormat::METAL);
 
         this->format = format;
-        this->functionName = (entryPointName != nullptr) ? NS::String::string(entryPointName, NS::UTF8StringEncoding) : MTLSTR("");
+        // Keep an owned reference: the shader destructor releases functionName,
+        // while NS::String::string() also leaves it in the current autorelease pool.
+        this->functionName = (entryPointName != nullptr) ? NS::String::string(entryPointName, NS::UTF8StringEncoding)->retain() : MTLSTR("");
 
         NS::Error *error = nullptr;
         const dispatch_data_t dispatchData = dispatch_data_create(data, size, dispatch_get_main_queue(), ^{});
@@ -1852,8 +1852,11 @@ namespace RT64 {
 
     void MetalCommandList::begin() {
         assert(mtl == nullptr);
-        mtl = queue->mtl->commandBufferWithUnretainedReferences();
+        NS::AutoreleasePool *releasePool = NS::AutoreleasePool::alloc()->init();
+        // The factory returns an autoreleased buffer. Own a reference until commit().
+        mtl = queue->mtl->commandBufferWithUnretainedReferences()->retain();
         mtl->setLabel(MTLSTR("RT64 Command List"));
+        releasePool->release();
     }
 
     void MetalCommandList::end() {
@@ -2763,8 +2766,10 @@ namespace RT64 {
         activeType = EncoderType::Blit;
 
         if (activeBlitEncoder == nullptr) {
-            activeBlitEncoder = mtl->blitCommandEncoder(device->renderInterface->reusableBlitDescriptor);
+            NS::AutoreleasePool *releasePool = NS::AutoreleasePool::alloc()->init();
+            activeBlitEncoder = mtl->blitCommandEncoder(device->renderInterface->reusableBlitDescriptor)->retain();
             activeBlitEncoder->setLabel(MTLSTR("Copy Blit Encoder"));
+            releasePool->release();
         }
     }
 
@@ -2783,9 +2788,11 @@ namespace RT64 {
         activeType = EncoderType::Resolve;
 
         if (activeResolveComputeEncoder == nullptr) {
-            activeResolveComputeEncoder = mtl->computeCommandEncoder();
+            NS::AutoreleasePool *releasePool = NS::AutoreleasePool::alloc()->init();
+            activeResolveComputeEncoder = mtl->computeCommandEncoder()->retain();
             activeResolveComputeEncoder->setLabel(MTLSTR("Resolve Texture Encoder"));
             activeResolveComputeEncoder->setComputePipelineState(device->renderInterface->resolveTexturePipelineState);
+            releasePool->release();
         }
     }
 
@@ -2867,6 +2874,10 @@ namespace RT64 {
         assert(commandLists != nullptr);
         assert(commandListCount > 0);
 
+        // This can run on an RT64 worker thread, so drain the autoreleased
+        // command buffer here instead of leaving it for thread teardown.
+        NS::AutoreleasePool *releasePool = NS::AutoreleasePool::alloc()->init();
+
         // Create a new command buffer to encode the wait semaphores into
         MTL::CommandBuffer* cmdBuffer = mtl->commandBufferWithUnretainedReferences();
         cmdBuffer->setLabel(MTLSTR("Wait Command Buffer"));
@@ -2907,6 +2918,8 @@ namespace RT64 {
 
         MetalCommandList *mutableCommandList = const_cast<MetalCommandList*>(interfaceCommandList);
         mutableCommandList->commit();
+
+        releasePool->release();
     }
 
     void MetalCommandQueue::waitForCommandFence(RenderCommandFence *fence) {

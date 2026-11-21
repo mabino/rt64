@@ -398,7 +398,10 @@ namespace RT64 {
     }
 
     TextureCache::StreamThread::~StreamThread() {
-        threadRunning = false;
+        {
+            std::lock_guard queueLock(textureCache->streamDescStackMutex);
+            threadRunning = false;
+        }
         textureCache->streamDescStackChanged.notify_all();
         thread->join();
         thread.reset(nullptr);

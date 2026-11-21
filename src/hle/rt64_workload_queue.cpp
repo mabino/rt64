@@ -8,9 +8,26 @@
 
 #include "rt64_present_queue.h"
 
+#if defined(__APPLE__)
+#include <Foundation/Foundation.hpp>
+#endif
+
 #define ENABLE_HIGH_RESOLUTION_RENDERER 1
 
 namespace RT64 {
+#if defined(__APPLE__)
+    namespace {
+        class ScopedAutoreleasePool {
+        public:
+            ScopedAutoreleasePool() : pool(NS::AutoreleasePool::alloc()->init()) {}
+            ~ScopedAutoreleasePool() { pool->release(); }
+
+        private:
+            NS::AutoreleasePool *pool;
+        };
+    }
+#endif
+
     static const int ReferenceHeight = 240;
     static const int ReferenceInterlacedHeight = 480;
 
@@ -860,6 +877,9 @@ namespace RT64 {
         int processCursor = -1;
         bool frameReduction = false;
         while (threadsRunning) {
+#if defined(__APPLE__)
+            ScopedAutoreleasePool autoreleasePool;
+#endif
             {
                 std::unique_lock<std::mutex> cursorLock(cursorMutex);
                 cursorCondition.wait(cursorLock, [&]() {
