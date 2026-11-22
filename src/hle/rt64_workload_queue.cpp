@@ -868,6 +868,11 @@ namespace RT64 {
 
     void WorkloadQueue::renderThreadLoop() {
         Thread::setCurrentThreadName("RT64 Workload");
+#if defined(__APPLE__)
+        // Keep a pool around the full thread lifetime as well as the per-workload pools below.
+        // Some Metal/Foundation objects can be autoreleased during thread setup or teardown.
+        ScopedAutoreleasePool threadAutoreleasePool;
+#endif
 
         WorkloadConfiguration workloadConfig;
         int64_t logicalTicks = 0;
@@ -1184,10 +1189,16 @@ namespace RT64 {
         // This workaround is not required if the driver is configured to be at the "Max Performance" power state.
 
         Thread::setCurrentThreadName("RT64 Idle");
+#if defined(__APPLE__)
+        ScopedAutoreleasePool threadAutoreleasePool;
+#endif
 
         const ShaderRecord &idle = ext.shaderLibrary->idle;
         RenderCommandList *commandList = ext.workloadGraphicsWorker->commandList.get();
         while (threadsRunning) {
+#if defined(__APPLE__)
+            ScopedAutoreleasePool iterationAutoreleasePool;
+#endif
             {
                 std::unique_lock<std::mutex> idleLock(idleMutex);
                 idleCondition.wait(idleLock, [&]() {
